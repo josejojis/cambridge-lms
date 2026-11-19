@@ -35,3 +35,10 @@ backend/bootstrap/cache/*.php
 .DS_Store
 Thumbs.db
 coverage/
+
+# backend runtime
+prisma/*.db
+prisma/*.db-journal
+*.db
+*.db-journal
+src/generated/

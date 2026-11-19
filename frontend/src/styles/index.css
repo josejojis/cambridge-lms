@@ -1,0 +1,33 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/plus-jakarta-sans';
+@import '@fontsource-variable/fraunces';
+
+@theme {
+  --color-navy-950: #071427;
+  --color-navy-900: #0b1f3a;
+  --color-navy-800: #12305a;
+  --color-navy-700: #1b4178;
+  --color-navy-100: #e6ecf5;
+  --color-navy-50: #f3f6fb;
+  --color-gold-600: #a8851c;
+  --color-gold-500: #c9a227;
+  --color-gold-400: #dbb94a;
+  --color-gold-100: #f8efd2;
+  --color-ink: #1c2433;
+  --color-muted: #5b6475;
+
+  --font-sans: 'Plus Jakarta Sans Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Fraunces Variable', Georgia, serif;
+}
+
+@layer base {
+  html { scroll-behavior: smooth; -webkit-tap-highlight-color: transparent; }
+  body { @apply bg-white font-sans text-ink antialiased; }
+  h1, h2, h3 { @apply font-display tracking-tight text-navy-900; }
+  :focus-visible { @apply outline-2 outline-offset-2 outline-gold-500; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

@@ -1,5 +1,7 @@
 # Elite Revision: Architecture
 
+> **Stack revised on 2026-11-19 (see [DECISIONS.md](DECISIONS.md), ADR-011 to ADR-017).** The backend is **Node.js + TypeScript + Fastify + Prisma** (SQLite in dev, PostgreSQL in prod), not Laravel. The frontend is a **React PWA**. The module boundaries, database design (section 5), payment flow and security rules below still apply: read "Laravel module" as `backend/src/modules/<module>/`, "Policy" as a policy function, and "Sanctum" as session-cookie auth. The live schema is [backend/prisma/schema.prisma](../backend/prisma/schema.prisma).
+
 ## 1. Shape of the system
 
 A **modular monolith**: one Laravel API and one React SPA, deployed together on one VPS.

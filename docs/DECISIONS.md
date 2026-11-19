@@ -1,6 +1,22 @@
 # Decision log, assumptions, risks and open questions
 
-## Architectural decisions (ADRs)
+## Stack revision: 2026-11-19 (supersedes the Laravel choices below)
+
+At the owner's request (no PHP, Linux or WSL tooling on the Windows dev machine):
+
+| # | Decision | Reason |
+|---|---|---|
+| ADR-011 | **Backend: Node.js + TypeScript + Fastify** replaces Laravel | Node is already installed. Fastify needs no decorator metadata (NestJS does), so it runs with `tsx` without a compile step. Code stays modular under `backend/src/modules/*`. |
+| ADR-012 | **ORM: Prisma 7** with driver adapters. **SQLite in development, PostgreSQL in production.** The schema uses only the portable subset (no `@db.*` native types). | The owner chose SQLite for dev. Production switches `provider` to `postgresql` and uses `@prisma/adapter-pg`. **Risk:** tests run on SQLite; behaviour such as case-insensitive search and locking differs, so a PostgreSQL CI job is required before go-live. |
+| ADR-013 | **Auth: server-side sessions in an HttpOnly, Secure, SameSite=Lax cookie**, with CSRF protection on state-changing requests. This replaces Sanctum (same security model as ADR-003). | Keeps tokens out of JavaScript |
+| ADR-014 | **RBAC: roles, permissions and pivots in our own tables**, with scoped checks (parent-child, teacher-class) in per-module policy functions | Replaces spatie/laravel-permission (ADR-005) |
+| ADR-015 | **Password hashing: Node's built-in scrypt** (N=2^15, r=8, p=1, 16-byte salt). The format string stores its parameters for future upgrades. | Memory-hard; no native add-on to compile on Windows |
+| ADR-016 | **Frontend is a Progressive Web App** (vite-plugin-pwa / Workbox): installable, precached app shell, offline fallback, update prompt. **API responses are never cached by the service worker** because they contain private learner data. | Mobile-first audience with intermittent connectivity |
+| ADR-017 | Dev ports: **frontend 5000** (Vite, proxies `/api`), **API 4000** | Owner request |
+
+ADR-001 (modular monolith), ADR-002 (modules), ADR-004 (curriculum model), ADR-006 (data minimization), ADR-007 (payments), ADR-009 (sanitization) and ADR-010 (money) still apply. ADR-003, ADR-005 and ADR-008 are superseded as described above.
+
+## Original architectural decisions (ADRs)
 
 | # | Decision | Reason | Status |
 |---|---|---|---|
