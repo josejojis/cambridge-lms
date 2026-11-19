@@ -1,0 +1,19 @@
+{
+  "name": "@elite/shared",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "description": "Contracts shared by API and web app: zod schemas, roles and permissions, marking engine.",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.0",
+    "vitest": "^4.0.0"
+  }
+}

@@ -1,20 +1,51 @@
 import { useEffect, useState } from 'react'
-import { NavLink, Outlet, useLocation, Link } from 'react-router'
+import { NavLink, Outlet, useLocation, Link, useNavigate } from 'react-router'
+import { useTranslation } from 'react-i18next'
 import { Menu, X } from 'lucide-react'
 import { Logo } from './Logo'
-import { ButtonLink } from '../ui/Button'
+import { Button, ButtonLink } from '../ui/Button'
 import { PwaPrompts } from '../pwa/PwaPrompts'
+import { useMe, useSignOut } from '../../lib/session'
+import { setLanguage } from '../../lib/i18n'
 
-const nav = [
-  { to: '/cambridge', label: 'Cambridge' },
-  { to: '/cbc', label: 'Kenya CBC' },
-  { to: '/courses', label: 'Courses' },
-  { to: '/exam-centre', label: 'Exam Centre' },
-  { to: '/pricing', label: 'Pricing' },
-  { to: '/about', label: 'About' },
+const navKeys = [
+  { to: '/cambridge', key: 'nav.cambridge' },
+  { to: '/cbc', key: 'nav.cbc' },
+  { to: '/courses', key: 'nav.courses' },
+  { to: '/exam-centre', key: 'nav.exams' },
+  { to: '/pricing', key: 'nav.pricing' },
+  { to: '/about', key: 'nav.about' },
 ]
 
+function AccountActions() {
+  const { t, i18n } = useTranslation()
+  const { data: me } = useMe()
+  const signOut = useSignOut()
+  const go = useNavigate()
+  return (
+    <>
+      <button className="rounded-lg px-2 py-2 text-xs font-bold uppercase text-muted hover:text-navy-900"
+        aria-label="Change language" onClick={() => setLanguage(i18n.language === 'sw' ? 'en' : 'sw')}>
+        {i18n.language === 'sw' ? 'EN' : 'SW'}
+      </button>
+      {me ? (
+        <>
+          <ButtonLink to={me.home} variant="outline">{t('nav.account')}</ButtonLink>
+          <Button variant="navy" onClick={async () => { await signOut(); go('/') }}>{t('nav.logout')}</Button>
+        </>
+      ) : (
+        <>
+          <ButtonLink to="/login" variant="outline">{t('nav.login')}</ButtonLink>
+          <ButtonLink to="/register">{t('nav.start')}</ButtonLink>
+        </>
+      )}
+    </>
+  )
+}
+
 export function PublicLayout() {
+  const { t } = useTranslation()
+  const nav = navKeys.map((n) => ({ to: n.to, label: t(n.key) }))
   const [open, setOpen] = useState(false)
   const { pathname } = useLocation()
   useEffect(() => { setOpen(false); window.scrollTo(0, 0) }, [pathname])
@@ -35,10 +66,7 @@ export function PublicLayout() {
               </NavLink>
             ))}
           </nav>
-          <div className="hidden items-center gap-2 lg:flex">
-            <ButtonLink to="/login" variant="outline">Log in</ButtonLink>
-            <ButtonLink to="/register">Start free</ButtonLink>
-          </div>
+          <div className="hidden items-center gap-2 lg:flex"><AccountActions /></div>
           <button className="rounded-lg p-2 text-navy-900 lg:hidden" aria-label={open ? 'Close menu' : 'Open menu'} aria-expanded={open} onClick={() => setOpen(!open)}>
             {open ? <X /> : <Menu />}
           </button>
@@ -48,10 +76,7 @@ export function PublicLayout() {
             {nav.map((n) => (
               <NavLink key={n.to} to={n.to} className="block rounded-lg px-3 py-3 font-medium text-navy-900 hover:bg-navy-50">{n.label}</NavLink>
             ))}
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              <ButtonLink to="/login" variant="outline">Log in</ButtonLink>
-              <ButtonLink to="/register">Start free</ButtonLink>
-            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2"><AccountActions /></div>
           </nav>
         )}
       </header>

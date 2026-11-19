@@ -10,12 +10,14 @@
  * - Payments are labelled sandbox test transactions; no real money or provider was involved.
  */
 import 'dotenv/config'
-import { createDb } from '../src/lib/db'
-import { hashPassword } from '../src/lib/password'
-import { markAnswer, totalAttempt, type QuestionType, type Response } from '../src/modules/assessment/marking'
+import { markAnswer, totalAttempt, type QuestionType, type Response, type RoleSlug } from '@elite/shared'
+import { createDb, isPostgresUrl } from '../src/lib/db'
+import { createCredentialUser } from '../src/modules/identity/users'
+import { reviewTopic, ratingFromPct } from '../src/modules/learning/srs'
+import { seedReference } from './seed-production'
 
 if (process.env.NODE_ENV === 'production') {
-  console.error('Refusing to seed demo data in production.')
+  console.error('Refusing to seed demo data in production. Use prisma/seed-production.ts.')
   process.exit(1)
 }
 
@@ -23,129 +25,43 @@ const db = createDb()
 const DEMO_PASSWORD = process.env.SEED_DEMO_PASSWORD ?? 'ChangeMe!2026'
 const days = (n: number) => new Date(Date.now() + n * 86_400_000)
 
-// ── Roles & permissions ─────────────────────────────────────────────────────
-const PERMISSIONS: Record<string, string[]> = {
-  users: ['users.view', 'users.manage', 'roles.manage'],
-  curriculum: ['curriculum.view', 'curriculum.manage'],
-  content: ['content.view', 'content.create', 'content.publish', 'resources.upload'],
-  assessment: ['questions.manage', 'assessments.manage', 'assessments.take', 'attempts.mark', 'results.release', 'results.view_own'],
-  classroom: ['classes.manage', 'classes.view_assigned'],
-  reporting: ['reports.platform', 'reports.class', 'reports.child'],
-  billing: ['plans.manage', 'payments.view', 'payments.reconcile', 'subscriptions.manage_own'],
-  communication: ['announcements.manage', 'notifications.send', 'support.manage', 'support.create'],
-  platform: ['settings.manage', 'audit.view'],
-}
-const ALL = Object.values(PERMISSIONS).flat()
-const ROLES: { slug: string; name: string; description: string; perms: string[] }[] = [
-  { slug: 'super_admin', name: 'Main Administrator', description: 'Full platform access', perms: ALL },
-  { slug: 'content_editor', name: 'Content Editor', description: 'Creates and maintains learning content and questions',
-    perms: ['curriculum.view', 'content.view', 'content.create', 'resources.upload', 'questions.manage', 'assessments.manage', 'support.create'] },
-  { slug: 'teacher', name: 'Teacher', description: 'Teaches assigned classes and marks work',
-    perms: ['curriculum.view', 'content.view', 'classes.view_assigned', 'assessments.manage', 'attempts.mark', 'results.release', 'reports.class', 'support.create'] },
-  { slug: 'parent', name: 'Parent', description: 'Monitors linked children and manages subscriptions',
-    perms: ['reports.child', 'subscriptions.manage_own', 'support.create'] },
-  { slug: 'learner', name: 'Learner', description: 'Studies, practises and sits assessments',
-    perms: ['curriculum.view', 'content.view', 'assessments.take', 'results.view_own', 'support.create'] },
-]
-
+/** Dev/CI only: empty every application table (keeps the migrations table). Works on SQLite and PostgreSQL. */
 async function wipe() {
-  // Child tables first. Dev-only.
-  const order = [
-    'auditLog', 'systemSetting', 'certificate', 'progressReport', 'supportTicketMessage', 'supportTicket', 'announcement', 'notification',
-    'invoice', 'paymentCallback', 'payment', 'subscriptionLearner', 'subscription', 'planEntitlement', 'subscriptionPlan',
-    'topicPerformance', 'assessmentResult', 'learnerAnswer', 'assessmentAttempt', 'assessmentQuestion', 'assessment',
-    'markingScheme', 'questionOption', 'question', 'questionBank',
-    'teacherAssignment', 'classLearner', 'schoolClass',
-    'bookmark', 'lessonProgress', 'enrollment', 'learningResource', 'lessonSection', 'lesson', 'course',
-    'learningObjective', 'topic', 'unit', 'curriculumSubject', 'subject', 'learnerProfile', 'academicLevel', 'curriculum',
-    'consent', 'parentLearnerLink', 'parentProfile', 'teacherProfile', 'userRole', 'rolePermission', 'permission', 'role', 'user',
-  ] as const
-  for (const m of order) await (db as any)[m].deleteMany()
+  if (isPostgresUrl()) {
+    const tables = await db.$queryRaw<{ tablename: string }[]>`
+      SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename <> '_prisma_migrations'`
+    if (tables.length) await db.$executeRawUnsafe(`TRUNCATE ${tables.map((t) => `"${t.tablename}"`).join(', ')} RESTART IDENTITY CASCADE`)
+    return
+  }
+  const tables = await db.$queryRaw<{ name: string }[]>`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '_prisma_migrations'`
+  await db.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
+  for (const t of tables) await db.$executeRawUnsafe(`DELETE FROM "${t.name}"`)
+  await db.$executeRawUnsafe("DELETE FROM sqlite_sequence").catch(() => {}) // reset autoincrement ids
+  await db.$executeRawUnsafe('PRAGMA foreign_keys = ON')
 }
 
 async function main() {
   console.log('Seeding Elite Revision DEMO data…')
   await wipe()
+  await seedReference(db)
 
-  // Permissions & roles
-  for (const [module, slugs] of Object.entries(PERMISSIONS))
-    for (const slug of slugs) await db.permission.create({ data: { slug, module } })
-  const perms = Object.fromEntries((await db.permission.findMany()).map((p) => [p.slug, p.id]))
-  const roles: Record<string, number> = {}
-  for (const r of ROLES) {
-    const role = await db.role.create({
-      data: { slug: r.slug, name: r.name, description: r.description, permissions: { create: r.perms.map((p) => ({ permissionId: perms[p] })) } },
-    })
-    roles[r.slug] = role.id
-  }
-
-  // ── Curricula & level trees ───────────────────────────────────────────────
-  const cambridge = await db.curriculum.create({ data: { code: 'cambridge', name: 'Cambridge International',
-    labels: { level: 'Stage', subject: 'Subject', unit: 'Unit', topic: 'Topic', objective: 'Learning objective' } } })
-  const cbc = await db.curriculum.create({ data: { code: 'cbc', name: 'Kenya Competency-Based Curriculum',
-    labels: { level: 'Grade', subject: 'Learning area', unit: 'Strand', topic: 'Sub-strand', objective: 'Learning outcome' } } })
-
-  const level = async (curriculumId: number, kind: 'stage' | 'qualification' | 'grade' | 'year', name: string, code: string, sortOrder: number, parentId?: number) =>
-    db.academicLevel.create({ data: { curriculumId, kind, name, code, sortOrder, parentId } })
-
+  const cambridge = await db.curriculum.findUniqueOrThrow({ where: { code: 'cambridge' } })
+  const cbc = await db.curriculum.findUniqueOrThrow({ where: { code: 'cbc' } })
   const L: Record<string, number> = {}
-  const camStages: [string, string, [string, string][]][] = [
-    ['Key Stage 1', 'KS1', [['Year 1', 'Y1'], ['Year 2', 'Y2']]],
-    ['Key Stage 2', 'KS2', [['Year 3', 'Y3'], ['Year 4', 'Y4'], ['Year 5', 'Y5'], ['Year 6', 'Y6']]],
-    ['Key Stage 3', 'KS3', [['Year 7', 'Y7'], ['Year 8', 'Y8'], ['Year 9', 'Y9']]],
-    ['Key Stage 4', 'KS4', [['Year 10', 'Y10'], ['Year 11', 'Y11']]],
-    ['Key Stage 5', 'KS5', [['Year 12', 'Y12'], ['Year 13', 'Y13']]],
-  ]
-  let i = 0
-  for (const [name, code, years] of camStages) {
-    const s = await level(cambridge.id, 'stage', name, code, i++)
-    L[code] = s.id
-    let j = 0
-    for (const [yn, yc] of years) L[yc] = (await level(cambridge.id, 'year', yn, yc, j++, s.id)).id
+  for (const l of await db.academicLevel.findMany({ include: { curriculum: true } }))
+    L[l.curriculum.code === 'cbc' ? `CBC_${l.code}` : l.code] = l.id
+
+  /** Offerings already exist from the reference seed. */
+  const offer = async (_curriculumId: number, levelKey: string, subject: string) => {
+    const s = await db.subject.findUniqueOrThrow({ where: { name: subject } })
+    return db.curriculumSubject.findUniqueOrThrow({ where: { levelId_subjectId: { levelId: L[levelKey], subjectId: s.id } } })
   }
-  for (const [name, code] of [['IGCSE', 'IGCSE'], ['AS Level', 'AS'], ['A Level', 'AL']] as const)
-    L[code] = (await level(cambridge.id, 'qualification', name, code, i++)).id
-
-  const cbcStages: [string, string, [string, string][]][] = [
-    ['Pre-Primary', 'PP', [['PP1', 'PP1'], ['PP2', 'PP2']]],
-    ['Lower Primary', 'LP', [['Grade 1', 'G1'], ['Grade 2', 'G2'], ['Grade 3', 'G3']]],
-    ['Upper Primary', 'UP', [['Grade 4', 'G4'], ['Grade 5', 'G5'], ['Grade 6', 'G6']]],
-    ['Junior School', 'JS', [['Grade 7', 'G7'], ['Grade 8', 'G8'], ['Grade 9', 'G9']]],
-    ['Senior School', 'SS', [['Grade 10', 'G10'], ['Grade 11', 'G11'], ['Grade 12', 'G12']]],
-  ]
-  i = 0
-  for (const [name, code, grades] of cbcStages) {
-    const s = await level(cbc.id, 'stage', name, code, i++)
-    L[`CBC_${code}`] = s.id
-    let j = 0
-    for (const [gn, gc] of grades) L[`CBC_${gc}`] = (await level(cbc.id, 'grade', gn, gc, j++, s.id)).id
-  }
-
-  // ── Subjects & offerings ──────────────────────────────────────────────────
-  const subjectNames: [string, string][] = [
-    ['Mathematics', 'Sigma'], ['English', 'BookOpen'], ['Biology', 'Leaf'], ['Chemistry', 'FlaskConical'], ['Physics', 'Atom'],
-    ['Computer Science', 'Cpu'], ['Integrated Science', 'Microscope'], ['Kiswahili', 'Languages'], ['Social Studies', 'Globe'],
-  ]
-  const S: Record<string, number> = {}
-  for (const [name, icon] of subjectNames)
-    S[name] = (await db.subject.create({ data: { name, slug: name.toLowerCase().replace(/\s+/g, '-'), icon } })).id
-
-  const offer = (curriculumId: number, levelKey: string, subject: string) =>
-    db.curriculumSubject.create({ data: { curriculumId, levelId: L[levelKey], subjectId: S[subject] } })
-
   const igMath = await offer(cambridge.id, 'IGCSE', 'Mathematics')
   const igBio = await offer(cambridge.id, 'IGCSE', 'Biology')
-  await offer(cambridge.id, 'IGCSE', 'Chemistry')
-  await offer(cambridge.id, 'IGCSE', 'Physics')
-  await offer(cambridge.id, 'IGCSE', 'Computer Science')
-  await offer(cambridge.id, 'AS', 'Mathematics')
-  await offer(cambridge.id, 'AL', 'Mathematics')
   const ks3Eng = await offer(cambridge.id, 'Y8', 'English')
   const g7Math = await offer(cbc.id, 'CBC_G7', 'Mathematics')
   const g7Sci = await offer(cbc.id, 'CBC_G7', 'Integrated Science')
-  await offer(cbc.id, 'CBC_G7', 'Kiswahili')
-  await offer(cbc.id, 'CBC_G7', 'Social Studies')
-  await offer(cbc.id, 'CBC_G4', 'Mathematics')
 
   // ── Units → topics → objectives (original demo wording) ───────────────────
   type TopicSpec = { title: string; objectives: string[] }
@@ -200,14 +116,10 @@ async function main() {
   }
 
   // ── Users ─────────────────────────────────────────────────────────────────
-  const pw = await hashPassword(DEMO_PASSWORD)
-  const mkUser = async (name: string, handle: string, role: string, opts: { status?: 'active' | 'pending_guardian'; email?: boolean } = {}) =>
-    db.user.create({
-      data: {
-        name, username: handle, email: opts.email === false ? null : `${handle}@elite-revision.test`, passwordHash: pw,
-        status: opts.status ?? 'active', emailVerifiedAt: opts.email === false ? null : new Date(), isTestData: true,
-        roles: { create: { roleId: roles[role] } },
-      },
+  const mkUser = async (name: string, handle: string, role: RoleSlug, opts: { status?: 'active' | 'pending_guardian'; email?: boolean } = {}) =>
+    createCredentialUser(db, {
+      name, username: handle, email: opts.email === false ? undefined : `${handle}@elite-revision.test`, password: DEMO_PASSWORD,
+      roles: [role], status: opts.status ?? 'active', emailVerified: opts.email !== false, isTestData: true,
     })
 
   const admin = await mkUser('Demo Administrator', 'admin', 'super_admin')
@@ -484,18 +396,21 @@ async function main() {
     e.pcts.push((a.finalScore! / a.question.marks) * 100)
     perf.set(k, e)
   }
-  for (const e of perf.values())
+  for (const e of perf.values()) {
     await db.topicPerformance.create({ data: {
       learnerId: e.learnerId, topicId: e.topicId, attempts: e.pcts.length,
       avgPct: Math.round(e.pcts.reduce((s, p) => s + p, 0) / e.pcts.length), lastPct: Math.round(e.pcts.at(-1)!),
     } })
+    // Spaced-repetition schedule from the same results (oldest first, as the reviews happened)
+    for (const [i, pct] of e.pcts.entries()) await reviewTopic(db, e.learnerId, e.topicId, ratingFromPct(pct), days(-14 + i * 3))
+  }
 
-  // ── Subscription plans (DEMO PRICES, to be set by admin) ──────────────────
-  const plan = (data: any) => db.subscriptionPlan.create({ data })
-  const free = await plan({ name: 'Free', slug: 'free', description: 'Sample lessons and limited practice.', priceMinor: 0, billingPeriod: 'free', periodDays: 3650, features: ['Sample lessons', '10 practice questions per subject', 'Progress tracking'], sortOrder: 0 })
-  const basic = await plan({ name: 'Basic', slug: 'basic-monthly', description: '[DEMO PRICE] Full lessons for chosen subjects.', priceMinor: 50000, billingPeriod: 'monthly', periodDays: 30, trialDays: 7, features: ['Full lessons (3 subjects)', 'Unlimited practice', 'Topic quizzes'], sortOrder: 1 })
-  const premium = await plan({ name: 'Premium', slug: 'premium-termly', description: '[DEMO PRICE] Everything, for up to 3 children.', priceMinor: 300000, billingPeriod: 'termly', periodDays: 120, maxLearners: 3, features: ['All subjects', 'Mock exams', 'Teacher marking', 'Parent reports'], sortOrder: 2 })
-  const examPrep = await plan({ name: 'Exam Preparation', slug: 'exam-prep-annual', description: '[DEMO PRICE] Intensive mock exam series.', priceMinor: 800000, billingPeriod: 'annual', periodDays: 365, features: ['Mock exam series', 'Revision plans', 'Priority marking'], sortOrder: 3 })
+  // ── Subscription plans: reference templates, given DEMO PRICES and activated ──
+  const plan = (slug: string, data: Record<string, unknown>) => db.subscriptionPlan.update({ where: { slug }, data })
+  const free = await plan('free', { description: 'Sample lessons and limited practice.' })
+  const basic = await plan('basic', { description: '[DEMO PRICE] Full lessons for chosen subjects.', priceMinor: 50000, trialDays: 7, isActive: true })
+  const premium = await plan('premium', { description: '[DEMO PRICE] Everything, for up to 3 children.', priceMinor: 300000, isActive: true })
+  const examPrep = await plan('exam-prep', { description: '[DEMO PRICE] Intensive mock exam series.', priceMinor: 800000, isActive: true })
   await db.planEntitlement.create({ data: { planId: free.id, courseId: cG7Math.course.id } })
   await db.planEntitlement.create({ data: { planId: basic.id, curriculumSubjectId: igMath.id } })
   await db.planEntitlement.create({ data: { planId: basic.id, curriculumSubjectId: g7Math.id } })
@@ -562,15 +477,8 @@ async function main() {
   } })
   await db.certificate.create({ data: { learnerId: aisha.id, courseId: cIgMath.course.id, verificationCode: 'DEMO-CERT-0001', issuedAt: days(-3) } })
 
-  // ── Platform settings & audit trail ───────────────────────────────────────
-  const settings: [string, unknown, boolean][] = [
-    ['platform.name', 'Elite Revision', true], ['platform.tagline', 'Learn. Practise. Prepare. Succeed.', true],
-    ['platform.support_email', 'support@elite-revision.com', true], ['billing.default_currency', 'KES', true],
-    ['billing.termly_period_days', 120, false], ['content.require_approval', true, false],
-    ['privacy.guardian_consent_age', 18, false], ['privacy.policy_version', '2026-11', true],
-    ['assessment.autosubmit_grace_seconds', 30, false], ['features.certificates', true, true],
-  ]
-  for (const [key, value, isPublic] of settings) await db.systemSetting.create({ data: { key, value: value as any, isPublic } })
+  // ── Audit trail (settings come from the reference seed) ───────────────────
+  await db.guardianInvite.create({ data: { learnerId: zuri.id, email: 'zuri.guardian@elite-revision.test' } })
 
   await db.auditLog.create({ data: { actorId: admin.id, action: 'seed.run', entityType: 'system', newValues: { note: 'Demo data seeded' } } })
   await db.auditLog.create({ data: { actorId: admin.id, action: 'role.assigned', entityType: 'user', entityId: String(tDavid.id), newValues: { role: 'teacher' } } })

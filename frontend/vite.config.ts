@@ -45,6 +45,9 @@ export default defineConfig({
     port: 5000, strictPort: true, host: true,
     proxy: { '/api': { target: 'http://127.0.0.1:4000', changeOrigin: false } },
   },
-  preview: { port: 5000, strictPort: true, host: true },
-  test: { environment: 'jsdom', setupFiles: ['./src/test-setup.ts'], globals: true },
+  preview: {
+    port: 5000, strictPort: true, host: true,
+    proxy: { '/api': { target: 'http://127.0.0.1:4000', changeOrigin: false } },
+  },
+  test: { environment: 'jsdom', setupFiles: ['./src/test-setup.ts'], globals: true, exclude: ['e2e/**', 'node_modules/**'] },
 })

@@ -1,5 +1,8 @@
-// Elite Revision database schema.
-// Portable subset: no @db.* native types, so the same models run on SQLite (dev) and PostgreSQL (prod).
+// Elite Revision database schema: the SINGLE SOURCE OF TRUTH.
+//   Development: SQLite (this file, migrations in prisma/migrations)
+//   Production:  PostgreSQL (prisma/postgres/schema.prisma is GENERATED from this file by
+//                scripts/sync-schemas.mjs; migrations in prisma/postgres/migrations, incl. row-level security)
+// Keep to the portable subset: no @db.* native types, no provider-specific features.
 // Money = integer minor units + ISO currency. Status fields use enums.
 
 generator client {
@@ -9,6 +12,25 @@ generator client {
 
 datasource db {
   provider = "sqlite"
+}
+
+/// Background job queue (portable: SQLite in dev, PostgreSQL in prod). See src/jobs.
+model Job {
+  id          Int       @id @default(autoincrement())
+  queue       String
+  data        Json
+  status      String    @default("queued") // queued | running | done | failed
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5) @map("max_attempts")
+  runAt       DateTime  @default(now()) @map("run_at")
+  lockedAt    DateTime? @map("locked_at")
+  lastError   String?   @map("last_error")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  finishedAt  DateTime? @map("finished_at")
+
+  @@index([status, runAt])
+  @@index([queue])
+  @@map("jobs")
 }
 
 // ───────────────────────────── Identity & access ─────────────────────────────
@@ -21,20 +43,32 @@ enum UserStatus {
 }
 
 model User {
-  id              Int        @id @default(autoincrement())
-  publicId        String     @unique @default(uuid()) @map("public_id")
-  name            String
-  email           String?    @unique
-  username        String?    @unique
-  passwordHash    String     @map("password_hash")
-  status          UserStatus @default(active)
-  emailVerifiedAt DateTime?  @map("email_verified_at")
-  lastLoginAt     DateTime?  @map("last_login_at")
-  isTestData      Boolean    @default(false) @map("is_test_data")
-  createdAt       DateTime   @default(now()) @map("created_at")
-  updatedAt       DateTime   @updatedAt @map("updated_at")
-  deletedAt       DateTime?  @map("deleted_at")
+  id               Int        @id @default(autoincrement())
+  publicId         String     @unique @default(uuid()) @map("public_id")
+  name             String
+  // Better Auth requires an email. Learners without one get an internal, undeliverable
+  // address `<username>@learners.elite-revision.invalid` (`emailIsPlaceholder = true`).
+  email            String     @unique
+  emailVerified    Boolean    @default(false) @map("email_verified")
+  emailIsPlaceholder Boolean  @default(false) @map("email_is_placeholder")
+  image            String?
+  username         String?    @unique
+  displayUsername  String?    @map("display_username")
+  twoFactorEnabled Boolean    @default(false) @map("two_factor_enabled")
+  status           UserStatus @default(active)
+  lastLoginAt      DateTime?  @map("last_login_at")
+  isTestData       Boolean    @default(false) @map("is_test_data")
+  createdAt        DateTime   @default(now()) @map("created_at")
+  updatedAt        DateTime   @updatedAt @map("updated_at")
+  deletedAt        DateTime?  @map("deleted_at")
 
+  sessions            Session[]
+  accounts            Account[]
+  twoFactors          TwoFactor[]
+  passkeys            Passkey[]
+  srsCards            SrsCard[]
+  aiInteractions      AiInteraction[]
+  guardianInvites     GuardianInvite[]
   roles               UserRole[]
   learnerProfile      LearnerProfile?
   teacherProfile      TeacherProfile?
@@ -71,6 +105,88 @@ model User {
 
   @@index([status])
   @@map("users")
+}
+
+// ── Better Auth tables (sessions are server-side; cookie holds an opaque token) ──
+
+model Session {
+  id        Int      @id @default(autoincrement())
+  token     String   @unique
+  userId    Int      @map("user_id")
+  expiresAt DateTime @map("expires_at")
+  ipAddress String?  @map("ip_address")
+  userAgent String?  @map("user_agent")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model Account {
+  id                    Int       @id @default(autoincrement())
+  accountId             String    @map("account_id")
+  providerId            String    @map("provider_id") // "credential" for passwords
+  userId                Int       @map("user_id")
+  password              String? // scrypt hash, never returned by the API
+  accessToken           String?   @map("access_token")
+  refreshToken          String?   @map("refresh_token")
+  idToken               String?   @map("id_token")
+  accessTokenExpiresAt  DateTime? @map("access_token_expires_at")
+  refreshTokenExpiresAt DateTime? @map("refresh_token_expires_at")
+  scope                 String?
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Verification {
+  id         Int      @id @default(autoincrement())
+  identifier String
+  value      String
+  expiresAt  DateTime @map("expires_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@index([identifier])
+  @@map("verifications")
+}
+
+model TwoFactor {
+  id          Int    @id @default(autoincrement())
+  secret      String
+  backupCodes             String    @map("backup_codes")
+  userId                  Int       @map("user_id")
+  verified                Boolean?  @default(true)
+  failedVerificationCount Int?      @default(0) @map("failed_verification_count") // brute-force lockout
+  lockedUntil             DateTime? @map("locked_until")
+  user                    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([secret])
+  @@map("two_factors")
+}
+
+model Passkey {
+  id           Int       @id @default(autoincrement())
+  name         String?
+  publicKey    String    @map("public_key")
+  userId       Int       @map("user_id")
+  credentialID String    @unique @map("credential_id")
+  counter      Int
+  deviceType   String    @map("device_type")
+  backedUp     Boolean   @map("backed_up")
+  transports   String?
+  aaguid       String?
+  createdAt    DateTime? @default(now()) @map("created_at")
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("passkeys")
 }
 
 model Role {
@@ -175,6 +291,19 @@ model ParentLearnerLink {
   @@unique([parentId, learnerId])
   @@index([learnerId])
   @@map("parent_learner_relationships")
+}
+
+/// A learner named a parent email that has no account yet; becomes a pending link when that parent registers.
+model GuardianInvite {
+  id         Int       @id @default(autoincrement())
+  learnerId  Int       @map("learner_id")
+  email      String
+  createdAt  DateTime  @default(now()) @map("created_at")
+  consumedAt DateTime? @map("consumed_at")
+  learner    User      @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+
+  @@index([email])
+  @@map("guardian_invites")
 }
 
 model Consent {
@@ -304,6 +433,7 @@ model Topic {
   questions   Question[]
   resources   LearningResource[]
   performance TopicPerformance[]
+  srsCards    SrsCard[]
 
   @@index([unitId])
   @@map("topics")
@@ -718,6 +848,48 @@ model TopicPerformance {
   @@id([learnerId, topicId])
   @@index([topicId])
   @@map("topic_performance")
+}
+
+/// Spaced-repetition (FSRS) schedule per learner per topic: drives "revise today" lists.
+model SrsCard {
+  learnerId     Int       @map("learner_id")
+  topicId       Int       @map("topic_id")
+  due           DateTime
+  stability     Float
+  difficulty    Float
+  elapsedDays   Int       @map("elapsed_days")
+  scheduledDays Int       @map("scheduled_days")
+  learningSteps Int       @default(0) @map("learning_steps")
+  reps          Int
+  lapses        Int
+  state         Int // ts-fsrs State: 0 New, 1 Learning, 2 Review, 3 Relearning
+  lastReview    DateTime? @map("last_review")
+  learner       User      @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+  topic         Topic     @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@id([learnerId, topicId])
+  @@index([learnerId, due])
+  @@map("srs_cards")
+}
+
+/// Every AI call is logged for accountability (no learner names or emails are sent to the model).
+model AiInteraction {
+  id           Int      @id @default(autoincrement())
+  userId       Int      @map("user_id")
+  kind         String // hint | marking_suggestion | question_draft
+  entityType   String   @map("entity_type")
+  entityId     String   @map("entity_id")
+  model        String
+  inputTokens  Int?     @map("input_tokens")
+  outputTokens Int?     @map("output_tokens")
+  output       Json
+  accepted     Boolean? // teacher accepted/overrode a marking suggestion
+  createdAt    DateTime @default(now()) @map("created_at")
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([entityType, entityId])
+  @@map("ai_interactions")
 }
 
 // ───────────────────────────── Billing ─────────────────────────────

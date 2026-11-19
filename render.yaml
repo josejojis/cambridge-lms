@@ -1,0 +1,118 @@
+# Render Blueprint: Elite Revision (static PWA + API + worker + PostgreSQL), Frankfurt region.
+# Create via Render Dashboard → New → Blueprint, pointing at this repository.
+# Secrets marked `sync: false` are entered in the dashboard and never committed.
+# Use paid instance types in production: free web services sleep, and free databases expire.
+# Plan names change occasionally; confirm them in the dashboard if blueprint validation complains.
+
+databases:
+  - name: elite-revision-db
+    region: frankfurt
+    plan: basic-1gb
+    postgresMajorVersion: "17"
+    databaseName: elite_revision
+    user: elite
+    ipAllowList: [] # private network only
+
+services:
+  # ── API ──────────────────────────────────────────────────────────────
+  - type: web
+    name: elite-revision-api
+    runtime: node
+    region: frankfurt
+    plan: starter
+    buildCommand: npm ci && npm run db:generate -w backend
+    # Runs before each deploy goes live: migrations (incl. row-level security) + idempotent reference data
+    preDeployCommand: npm run db:deploy -w backend && npm run db:seed:production -w backend
+    startCommand: npm run start -w backend
+    healthCheckPath: /api/v1/health
+    autoDeploy: true
+    envVars:
+      - fromGroup: elite-revision-shared
+      - key: DATABASE_URL
+        fromDatabase: { name: elite-revision-db, property: connectionString }
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_NAME
+        sync: false
+      - key: ADMIN_INITIAL_PASSWORD
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: MPESA_ENV
+        value: sandbox
+      - key: MPESA_CONSUMER_KEY
+        sync: false
+      - key: MPESA_CONSUMER_SECRET
+        sync: false
+      - key: MPESA_SHORTCODE
+        sync: false
+      - key: MPESA_PASSKEY
+        sync: false
+
+  # ── Background worker (pg-boss: emails, auto-submit, expiries, analytics) ──
+  - type: worker
+    name: elite-revision-worker
+    runtime: node
+    region: frankfurt
+    plan: starter
+    buildCommand: npm ci && npm run db:generate -w backend
+    startCommand: npm run worker:prod -w backend
+    envVars:
+      - fromGroup: elite-revision-shared
+      - key: DATABASE_URL
+        fromDatabase: { name: elite-revision-db, property: connectionString }
+
+  # ── PWA (static, CDN) ────────────────────────────────────────────────
+  # /api/* is proxied to the API so the session cookie stays first-party (same origin).
+  - type: web
+    name: elite-revision-web
+    runtime: static
+    buildCommand: npm ci && npm run build -w frontend
+    staticPublishPath: frontend/dist
+    domains: [elite-revision.com, www.elite-revision.com]
+    routes:
+      - type: rewrite
+        source: /api/*
+        destination: https://elite-revision-api.onrender.com/api/*
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self' https://*.ingest.sentry.io; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+      - path: /*
+        name: Strict-Transport-Security
+        value: max-age=31536000; includeSubDomains
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /*
+        name: Permissions-Policy
+        value: camera=(), microphone=(), geolocation=()
+      - path: /sw.js
+        name: Cache-Control
+        value: no-cache
+
+envVarGroups:
+  - name: elite-revision-shared
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "24"
+      - key: APP_ORIGIN
+        value: https://elite-revision.com
+      - key: BETTER_AUTH_URL
+        value: https://elite-revision.com
+      - key: BETTER_AUTH_SECRET
+        generateValue: true
+      - key: MAIL_PROVIDER
+        value: resend
+      - key: RESEND_API_KEY
+        sync: false
+      - key: SENTRY_DSN
+        sync: false

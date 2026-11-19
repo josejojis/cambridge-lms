@@ -1,0 +1,11 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":semanticCommits"],
+  "schedule": ["before 6am on monday"],
+  "timezone": "Africa/Nairobi",
+  "packageRules": [
+    { "matchUpdateTypes": ["patch", "minor"], "matchCurrentVersion": "!/^0/", "groupName": "non-major dependencies" },
+    { "matchPackageNames": ["prisma", "@prisma/client", "@prisma/adapter-pg"], "groupName": "prisma" }
+  ],
+  "vulnerabilityAlerts": { "labels": ["security"], "schedule": ["at any time"] }
+}

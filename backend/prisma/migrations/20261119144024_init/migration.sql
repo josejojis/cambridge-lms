@@ -1,18 +1,102 @@
 -- CreateTable
+CREATE TABLE "jobs" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "queue" TEXT NOT NULL,
+    "data" JSONB NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'queued',
+    "attempts" INTEGER NOT NULL DEFAULT 0,
+    "max_attempts" INTEGER NOT NULL DEFAULT 5,
+    "run_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "locked_at" DATETIME,
+    "last_error" TEXT,
+    "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "finished_at" DATETIME
+);
+
+-- CreateTable
 CREATE TABLE "users" (
     "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     "public_id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
-    "email" TEXT,
+    "email" TEXT NOT NULL,
+    "email_verified" BOOLEAN NOT NULL DEFAULT false,
+    "email_is_placeholder" BOOLEAN NOT NULL DEFAULT false,
+    "image" TEXT,
     "username" TEXT,
-    "password_hash" TEXT NOT NULL,
+    "display_username" TEXT,
+    "two_factor_enabled" BOOLEAN NOT NULL DEFAULT false,
     "status" TEXT NOT NULL DEFAULT 'active',
-    "email_verified_at" DATETIME,
     "last_login_at" DATETIME,
     "is_test_data" BOOLEAN NOT NULL DEFAULT false,
     "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" DATETIME NOT NULL,
     "deleted_at" DATETIME
+);
+
+-- CreateTable
+CREATE TABLE "sessions" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "token" TEXT NOT NULL,
+    "user_id" INTEGER NOT NULL,
+    "expires_at" DATETIME NOT NULL,
+    "ip_address" TEXT,
+    "user_agent" TEXT,
+    "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" DATETIME NOT NULL,
+    CONSTRAINT "sessions_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE "accounts" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "account_id" TEXT NOT NULL,
+    "provider_id" TEXT NOT NULL,
+    "user_id" INTEGER NOT NULL,
+    "password" TEXT,
+    "access_token" TEXT,
+    "refresh_token" TEXT,
+    "id_token" TEXT,
+    "access_token_expires_at" DATETIME,
+    "refresh_token_expires_at" DATETIME,
+    "scope" TEXT,
+    "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" DATETIME NOT NULL,
+    CONSTRAINT "accounts_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE "verifications" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "identifier" TEXT NOT NULL,
+    "value" TEXT NOT NULL,
+    "expires_at" DATETIME NOT NULL,
+    "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" DATETIME NOT NULL
+);
+
+-- CreateTable
+CREATE TABLE "two_factors" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "secret" TEXT NOT NULL,
+    "backup_codes" TEXT NOT NULL,
+    "user_id" INTEGER NOT NULL,
+    CONSTRAINT "two_factors_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE "passkeys" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "name" TEXT,
+    "public_key" TEXT NOT NULL,
+    "user_id" INTEGER NOT NULL,
+    "credential_id" TEXT NOT NULL,
+    "counter" INTEGER NOT NULL,
+    "device_type" TEXT NOT NULL,
+    "backed_up" BOOLEAN NOT NULL,
+    "transports" TEXT,
+    "aaguid" TEXT,
+    "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "passkeys_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
 -- CreateTable
@@ -96,6 +180,16 @@ CREATE TABLE "parent_learner_relationships" (
     "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "parent_learner_relationships_parent_id_fkey" FOREIGN KEY ("parent_id") REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "parent_learner_relationships_learner_id_fkey" FOREIGN KEY ("learner_id") REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE "guardian_invites" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "learner_id" INTEGER NOT NULL,
+    "email" TEXT NOT NULL,
+    "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "consumed_at" DATETIME,
+    CONSTRAINT "guardian_invites_learner_id_fkey" FOREIGN KEY ("learner_id") REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
 -- CreateTable
@@ -466,6 +560,42 @@ CREATE TABLE "topic_performance" (
 );
 
 -- CreateTable
+CREATE TABLE "srs_cards" (
+    "learner_id" INTEGER NOT NULL,
+    "topic_id" INTEGER NOT NULL,
+    "due" DATETIME NOT NULL,
+    "stability" REAL NOT NULL,
+    "difficulty" REAL NOT NULL,
+    "elapsed_days" INTEGER NOT NULL,
+    "scheduled_days" INTEGER NOT NULL,
+    "learning_steps" INTEGER NOT NULL DEFAULT 0,
+    "reps" INTEGER NOT NULL,
+    "lapses" INTEGER NOT NULL,
+    "state" INTEGER NOT NULL,
+    "last_review" DATETIME,
+
+    PRIMARY KEY ("learner_id", "topic_id"),
+    CONSTRAINT "srs_cards_learner_id_fkey" FOREIGN KEY ("learner_id") REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "srs_cards_topic_id_fkey" FOREIGN KEY ("topic_id") REFERENCES "topics" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE "ai_interactions" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "user_id" INTEGER NOT NULL,
+    "kind" TEXT NOT NULL,
+    "entity_type" TEXT NOT NULL,
+    "entity_id" TEXT NOT NULL,
+    "model" TEXT NOT NULL,
+    "input_tokens" INTEGER,
+    "output_tokens" INTEGER,
+    "output" JSONB NOT NULL,
+    "accepted" BOOLEAN,
+    "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "ai_interactions_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- CreateTable
 CREATE TABLE "subscription_plans" (
     "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     "name" TEXT NOT NULL,
@@ -663,6 +793,12 @@ CREATE TABLE "system_settings" (
 );
 
 -- CreateIndex
+CREATE INDEX "jobs_status_run_at_idx" ON "jobs"("status", "run_at");
+
+-- CreateIndex
+CREATE INDEX "jobs_queue_idx" ON "jobs"("queue");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "users_public_id_key" ON "users"("public_id");
 
 -- CreateIndex
@@ -673,6 +809,27 @@ CREATE UNIQUE INDEX "users_username_key" ON "users"("username");
 
 -- CreateIndex
 CREATE INDEX "users_status_idx" ON "users"("status");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "sessions_token_key" ON "sessions"("token");
+
+-- CreateIndex
+CREATE INDEX "sessions_user_id_idx" ON "sessions"("user_id");
+
+-- CreateIndex
+CREATE INDEX "accounts_user_id_idx" ON "accounts"("user_id");
+
+-- CreateIndex
+CREATE INDEX "verifications_identifier_idx" ON "verifications"("identifier");
+
+-- CreateIndex
+CREATE INDEX "two_factors_user_id_idx" ON "two_factors"("user_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "passkeys_credential_id_key" ON "passkeys"("credential_id");
+
+-- CreateIndex
+CREATE INDEX "passkeys_user_id_idx" ON "passkeys"("user_id");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "roles_slug_key" ON "roles"("slug");
@@ -706,6 +863,9 @@ CREATE INDEX "parent_learner_relationships_learner_id_idx" ON "parent_learner_re
 
 -- CreateIndex
 CREATE UNIQUE INDEX "parent_learner_relationships_parent_id_learner_id_key" ON "parent_learner_relationships"("parent_id", "learner_id");
+
+-- CreateIndex
+CREATE INDEX "guardian_invites_email_idx" ON "guardian_invites"("email");
 
 -- CreateIndex
 CREATE INDEX "consents_user_id_idx" ON "consents"("user_id");
@@ -841,6 +1001,15 @@ CREATE UNIQUE INDEX "assessment_results_attempt_id_key" ON "assessment_results"(
 
 -- CreateIndex
 CREATE INDEX "topic_performance_topic_id_idx" ON "topic_performance"("topic_id");
+
+-- CreateIndex
+CREATE INDEX "srs_cards_learner_id_due_idx" ON "srs_cards"("learner_id", "due");
+
+-- CreateIndex
+CREATE INDEX "ai_interactions_user_id_created_at_idx" ON "ai_interactions"("user_id", "created_at");
+
+-- CreateIndex
+CREATE INDEX "ai_interactions_entity_type_entity_id_idx" ON "ai_interactions"("entity_type", "entity_id");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "subscription_plans_slug_key" ON "subscription_plans"("slug");

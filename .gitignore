@@ -43,3 +43,7 @@ prisma/*.db-journal
 *.db-journal
 backend/src/generated/
 frontend/dev-dist/
+*.tsbuildinfo
+backend/ci.db
+frontend/test-results/
+frontend/playwright-report/

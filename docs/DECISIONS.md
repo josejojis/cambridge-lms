@@ -1,5 +1,21 @@
 # Decision log, assumptions, risks and open questions
 
+## Modernization: 2026-11-19 (supersedes conflicting entries below)
+
+| # | Decision | Reason |
+|---|---|---|
+| ADR-018 | **npm workspaces monorepo**: `packages/shared` holds zod schemas, roles/permissions, curriculum reference structure and the marking engine, used by both API and web | One definition of every request/response; the browser validates forms with the same schema the API enforces; offline practice can auto-mark on the device |
+| ADR-019 | **OpenAPI from zod** (`fastify-type-provider-zod` + `@fastify/swagger`) → `openapi-typescript` → typed `openapi-fetch` client | API/frontend drift becomes a compile error |
+| ADR-020 | **Better Auth** replaces hand-rolled auth: HttpOnly session cookie, username login for learners, email login for adults, email verification, password reset, TOTP two-factor and passkeys, built-in rate limiting. Public sign-up is disabled; our registration endpoints create accounts so roles and consent are always recorded | Maintained, audited library; passkeys/2FA for adults |
+| ADR-021 | **CASL policies** for authorization (roles + relationships), plus **PostgreSQL row-level security in production** (`asUser`, migration `rls_policies`) as a second layer | A bug in one layer can't leak a child's records |
+| ADR-022 | **Database: SQLite in development, PostgreSQL in production** (owner decision). `prisma/schema.prisma` is the single source; `scripts/sync-schemas.mjs` generates `prisma/postgres/schema.prisma`; each provider has its own migrations; `prisma.config.ts` picks by `DATABASE_URL`. CI runs the full suite on **both**. Supersedes the PGlite idea and ADR-012. | No local database server to install; production keeps Postgres features |
+| ADR-023 | **Job queue in the database** (`jobs` table, atomic claim, retries with backoff) instead of Redis/BullMQ or pg-boss | Works on SQLite and PostgreSQL, nothing extra to operate |
+| ADR-024 | **Offline-first PWA**: Dexie (IndexedDB) for downloaded lessons and an **answer outbox** replayed on reconnect; the API's answer save is an idempotent upsert and the **server deadline** decides lateness; on-device data is cleared on sign-out | Patchy connectivity on mid-range Android phones |
+| ADR-025 | **Spaced repetition (FSRS via ts-fsrs)** per learner × topic, updated from real marked results | Evidence-based "revise today" lists |
+| ADR-026 | **AI with a human in charge**: hints only in practice (never exams), grounded in our own lesson notes (Claude Haiku 5.5); essay **marking suggestions** for teachers with structured output (Claude Sonnet 5.5), clamped to the marking scheme, never written as a score. No names or emails sent; every call logged in `ai_interactions`; both features off until an admin enables them | Kenya DPA and fairness to learners |
+| ADR-027 | **Hosting: Render (Frankfurt)** via `render.yaml` (static PWA + API + worker + managed PostgreSQL). Alternative: Docker Compose + Caddy on a VPS (`deploy/`) when data must stay in Kenya | Vercel can't run the always-on API/worker the platform needs |
+| ADR-028 | **Seeding split**: `seed-production.ts` (idempotent reference data + first admin from env vars, safe on every deploy) vs `seed.ts` (demo data, refuses to run in production) | Production gets a ready system with no fake users |
+
 ## Stack revision: 2026-11-19 (supersedes the Laravel choices below)
 
 At the owner's request (no PHP, Linux or WSL tooling on the Windows dev machine):
