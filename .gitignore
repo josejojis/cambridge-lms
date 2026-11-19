@@ -37,8 +37,9 @@ Thumbs.db
 coverage/
 
 # backend runtime
-prisma/*.db
+backend/prisma/*.db
 prisma/*.db-journal
 *.db
 *.db-journal
-src/generated/
+backend/src/generated/
+frontend/dev-dist/
