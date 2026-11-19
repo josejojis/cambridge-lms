@@ -49,7 +49,7 @@ services:
       - key: MPESA_PASSKEY
         sync: false
 
-  # ── Background worker (pg-boss: emails, auto-submit, expiries, analytics) ──
+  # ── Background worker (database job queue: emails, auto-submit expired exams, subscription expiry) ──
   - type: worker
     name: elite-revision-worker
     runtime: node
@@ -104,10 +104,12 @@ envVarGroups:
         value: production
       - key: NODE_VERSION
         value: "24"
+      # First launch uses the Render address. Once elite-revision.com DNS is verified on the web service,
+      # change both to https://elite-revision.com (in the dashboard env group) and redeploy.
       - key: APP_ORIGIN
-        value: https://elite-revision.com
+        value: https://elite-revision-web.onrender.com
       - key: BETTER_AUTH_URL
-        value: https://elite-revision.com
+        value: https://elite-revision-web.onrender.com
       - key: BETTER_AUTH_SECRET
         generateValue: true
       - key: MAIL_PROVIDER
