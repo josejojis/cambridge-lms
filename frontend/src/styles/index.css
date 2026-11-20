@@ -9,7 +9,7 @@
   --color-navy-700: #1b4178;
   --color-navy-100: #e6ecf5;
   --color-navy-50: #f3f6fb;
-  --color-gold-600: #a8851c;
+  --color-gold-600: #7d6310; /* darkened for WCAG AA text contrast (5.7:1 on white) */
   --color-gold-500: #c9a227;
   --color-gold-400: #dbb94a;
   --color-gold-100: #f8efd2;

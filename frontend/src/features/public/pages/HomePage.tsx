@@ -147,7 +147,7 @@ function HowItWorks() {
       <ol className="grid gap-6 md:grid-cols-4">
         {steps.map((s, i) => (
           <li key={s.title} className="relative">
-            <span className="font-display text-5xl font-semibold text-gold-500/70">{String(i + 1).padStart(2, '0')}</span>
+            <span className="font-display text-5xl font-semibold text-gold-600">{String(i + 1).padStart(2, '0')}</span>
             <h3 className="mt-3 font-sans text-lg font-bold">{s.title}</h3>
             <p className="mt-2 text-sm leading-relaxed text-muted">{s.body}</p>
           </li>

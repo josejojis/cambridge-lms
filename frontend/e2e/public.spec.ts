@@ -8,7 +8,8 @@ for (const path of pages) {
     await page.goto(path)
     const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()
     const serious = results.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical')
-    expect(serious.map((v) => `${v.id}: ${v.help}`)).toEqual([])
+    // Include the failing elements so a CI failure says exactly what to fix
+    expect(serious.map((v) => `${v.id}: ${v.help} → ${v.nodes.slice(0, 5).map((n) => n.target.join(' ')).join(' | ')}`)).toEqual([])
   })
 }
 
